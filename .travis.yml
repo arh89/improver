@@ -38,6 +38,13 @@ install:
   # Install our own extra dependencies (+ filelock for Iris test).
   - conda install -c conda-forge mock filelock pep8 pylint sphinx pandas python-stratify
 
+  # radon for code complexity metrics
+  - pip install mando
+  - pip install radon
+
 script:
   - python -c "import iris"
   - bin/improver tests
+  - radon cc -s -e "lib/improver/tests/*" lib/improver/
+  - radon mi -s -e "lib/improver/tests/*" lib/improver/
+  - radon raw -s -e "lib/improver/tests/*" lib/improver/
