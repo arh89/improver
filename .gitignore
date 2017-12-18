@@ -1,0 +1,23 @@
+*.py[co]
+
+# Pydev/Eclipse files
+.project
+.pydevproject
+.settings
+
+# PyCharm files
+/.idea
+*.cover
+
+# Created by editors
+*~
+\#*
+\.\#*
+*.swp
+
+# Site-specific setup
+etc/site-init
+
+# Files from build of doc
+*.rst
+/doc/build/
