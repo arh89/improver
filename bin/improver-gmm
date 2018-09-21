@@ -1,0 +1,138 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+# -----------------------------------------------------------------------------
+# (C) British Crown Copyright 2017-2018 Met Office.
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# * Redistributions of source code must retain the above copyright notice, this
+#   list of conditions and the following disclaimer.
+#
+# * Redistributions in binary form must reproduce the above copyright notice,
+#   this list of conditions and the following disclaimer in the documentation
+#   and/or other materials provided with the distribution.
+#
+# * Neither the name of the copyright holder nor the names of its
+#   contributors may be used to endorse or promote products derived from
+#   this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+"""
+Generate additional realizations using a Gaussian mixture model.
+"""
+
+import numpy as np
+from sklearn.mixture import GaussianMixture as GMM
+from sklearn.decomposition import PCA
+import iris
+
+from improver.argparser import ArgParser
+from improver.utilities.load import load_cube
+from improver.utilities.save import save_netcdf
+
+
+def main():
+    """
+    Generate additional realizations using a Gaussian mixture model.
+    """
+
+    cli_definition = {'central_arguments': ['input_file', 'output_file'],
+                      'specific_arguments':
+                        [(['--npcs'],
+                          {'default': 0.99,
+                          'type': float,
+                          'help': ('The number of principal components to '
+                                   'select. If 0 < npcs < 1, this is the '
+                                   'decimal proportion of the variance that '
+                                   'should be explained by the principal '
+                                   'components.')}),
+                         (['--nrealizations'],
+                          {'type': int,
+                           'help': ('The number of additional realizations to '
+                                    'generate. If None, will be the same as '
+                                    'the number of realizations in the input '
+                                    'file.')}),
+                         (['--ngmcs'],
+                          {'type': int,
+                           'help': ('The number of Gaussian mixture model '
+                                    'components to use. If None, we choose '
+                                    'this based on the Akaike information '
+                                    'criterion.')})],
+                      'description': ('Generate additional realizations using '
+                                      'a Gaussian mixture model.')}
+
+    args = ArgParser(**cli_definition).parse_args()
+
+    cube = load_cube(args.input_filepath)
+
+    orig_realizations = list(cube.slices_over('realization'))
+    template_cube = orig_realizations[0]
+    num_orig_realizations = len(orig_realizations)
+    cube_shape = template_cube.shape
+
+    data = np.array([cube.data.flatten() for cube
+                     in cube.slices_over('realization')])
+
+    num_pca_components = args.npcs
+    if num_pca_components.is_integer():
+        num_pca_components = int(num_pca_components)
+
+    pca = PCA(n_components=num_pca_components, whiten=True)
+    data_pca = pca.fit_transform(data)
+
+    num_gmm_components = args.ngmcs
+    if num_gmm_components is None:
+        # try only as many as we have realizations
+        num_gmm_components = np.arange(1, num_orig_realizations+1)
+        # model comparisons with fixed seed
+        gm_models = [GMM(n_components=n, covariance_type='full', random_state=0)
+                      for n in num_gmm_components]
+        aic = [model.fit(data_pca).aic(data_pca) for model in gm_models]
+        num_gmm_components = num_gmm_components[np.argmin(aic)]
+
+    gmm = GMM(n_components=num_gmm_components, covariance_type='full')
+    gmm.fit(data_pca)
+    if not gmm.converged_:
+        raise Exception('GMM did not converge')
+
+    def generated_cube(template_cube, gmm, pca, realization):
+        cube = template_cube.copy()
+        data, _ = gmm.sample()
+        data = pca.inverse_transform(data)
+        cube.data = data.reshape(cube.shape).astype(cube.dtype)
+        cube.coord('realization').points = realization
+        return cube
+
+    num_gen_realizations = args.nrealizations
+    if num_gen_realizations is None:
+        # double size of ensemble
+        num_gen_realizations = num_orig_realizations
+
+    tot_num_realizations = num_gen_realizations + num_orig_realizations
+    orig_realization_nums = [cube.coord('realization').points[0]
+                             for cube in orig_realizations]
+    gen_realization_nums = list(set(range(tot_num_realizations))
+                                - set(orig_realization_nums))
+    generated_cubes = [generated_cube(template_cube, gmm, pca,
+                                      realization)
+                       for realization in gen_realization_nums]
+
+    cubes = orig_realizations + generated_cubes
+    new_cube = iris.cube.CubeList(cubes).merge_cube()
+    save_netcdf(new_cube, args.output_filepath)
+
+
+if __name__ == "__main__":
+    main()
