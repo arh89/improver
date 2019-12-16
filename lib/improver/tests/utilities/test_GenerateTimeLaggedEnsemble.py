@@ -41,17 +41,6 @@ from improver.tests.set_up_test_cubes import set_up_variable_cube
 from improver.utilities.time_lagging import GenerateTimeLaggedEnsemble
 
 
-class Test__repr__(IrisTest):
-
-    """Test the repr method."""
-
-    def test_basic(self):
-        """Test that the __repr__ returns the expected string."""
-        result = str(GenerateTimeLaggedEnsemble(cycletime="20180501T0300Z"))
-        msg = '<GenerateTimeLaggedEnsemble: cycletime: 20180501T0300Z>'
-        self.assertEqual(result, msg)
-
-
 class Test_process(IrisTest):
 
     """Test interpolation of cubes to intermediate times using the plugin."""
